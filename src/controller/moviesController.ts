@@ -175,7 +175,7 @@ export const getAllDetailsByMovieId = async (req: Request, res: Response) => {
         INNER JOIN movie m ON s.movie_id = m.id
         INNER JOIN theaters t ON s.theater_id = t.id
         WHERE s.movie_id = ? 
-          AND s.show_date >= CURDATE()
+          
         ORDER BY s.show_date ASC, s.show_time ASC;
     `;
 
@@ -228,7 +228,7 @@ export const getAllDetailsByM_idT_id = async (req: Request, res: Response) => {
         INNER JOIN movie m ON s.movie_id = m.id
         INNER JOIN theaters t ON s.theater_id = t.id
         WHERE s.movie_id = ? AND s.theater_id = ?
-          AND s.show_date >= CURDATE()
+          
         ORDER BY s.show_date ASC, s.show_time ASC;
     `;
 

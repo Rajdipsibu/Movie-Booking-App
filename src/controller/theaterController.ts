@@ -123,7 +123,7 @@ export const getAllMovie_ShowsController = async (req: Request, res: Response) =
     INNER JOIN movie m ON s.movie_id = m.id
     INNER JOIN theaters t ON s.theater_id = t.id
     WHERE s.theater_id = ? 
-    AND s.show_date >= CURDATE() 
+     
     ORDER BY s.show_date, s.show_time
     `;
 

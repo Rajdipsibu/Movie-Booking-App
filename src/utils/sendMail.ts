@@ -1,26 +1,29 @@
 import nodemailer from "nodemailer";
 
 const transporter = nodemailer.createTransport({
-  secure: true,
-  host:'smtp.gmail.com',
-  port:465,
+  service: "gmail",
   auth: {
-    user: "drajdip321@gmail.com",   // your gmail
-    pass: "ptxauhfhoovcxbrb"
-    // ptxa uhfh oovc xbrb    // app password
-  }
+    user: process.env.EMAIL_USER || "drajdip321@gmail.com",
+    pass: process.env.EMAIL_PASS || "isfttxkjxaytjwwj",
+  },
 });
 
-export const sendLoginMail = (
+export const sendLoginMail = async (
   email: string,
-  subject:string,
-  html:string
+  subject: string,
+  html: string
 ) => {
-  transporter.sendMail({
-    to: email,
-    subject: subject,
-    html:html
-  });
-  console.log("Email send");
-  
+  try {
+    const info = await transporter.sendMail({
+      from: `"Movie Booking" <${process.env.EMAIL_USER || "drajdip321@gmail.com"}>`,
+      to: email,
+      subject: subject,
+      html: html,
+    });
+    console.log("Email sent successfully:", info.messageId);
+    return { success: true, info };
+  } catch (error) {
+    console.error("Nodemailer Error: Failed to send email:", error);
+    return { success: false, error };
+  }
 };

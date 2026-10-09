@@ -57,26 +57,90 @@ export const cancelBookingController = async (req: AuthRequest, res: Response) =
 ///
 // Controller: bookingsController.ts
 export const createBooking = async (req: AuthRequest, res: Response) => {
-
+    let connection;
     try {
         const { show_id, seats_booked, total_price } = req.body;
         const user_id = (req as any).user?.id || req.body.user_id;
-// Force it to be a clean string: "A1,A2"
-const seatsForDb = Array.isArray(seats_booked) 
-    ? seats_booked.join(',') 
-    : seats_booked; 
 
-        const sql = `
+        if (!show_id || !seats_booked) {
+            return res.status(400).json({
+                success: false,
+                message: "Show ID and seats are required"
+            });
+        }
+
+        // Parse seats to clean array of uppercase strings
+        const requestedSeats: string[] = (
+            Array.isArray(seats_booked) 
+                ? seats_booked 
+                : String(seats_booked).split(',')
+        )
+            .map((s: string) => String(s).trim().toUpperCase())
+            .filter((s: string) => s.length > 0);
+
+        if (requestedSeats.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Please select at least one seat"
+            });
+        }
+
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+
+        // 1. Lock and check existing active bookings for this show
+        const checkSql = `
+            SELECT seats 
+            FROM bookings 
+            WHERE show_id = ? 
+              AND (
+                booking_status = 'confirmed' 
+                OR (booking_status = 'pending' AND (created_at >= NOW() - INTERVAL 10 MINUTE OR created_at IS NULL))
+              )
+            FOR UPDATE
+        `;
+
+        const [existingRows]: any = await connection.execute(checkSql, [show_id]);
+
+        const occupiedSet = new Set<string>();
+        for (const row of existingRows) {
+            if (row.seats) {
+                const clean = String(row.seats).replace(/[\[\]'"]/g, "");
+                clean.split(',').forEach((s: string) => {
+                    const trimmed = s.trim().toUpperCase();
+                    if (trimmed) occupiedSet.add(trimmed);
+                });
+            }
+        }
+
+        // 2. Check if any requested seat is already booked or reserved
+        const conflictingSeats = requestedSeats.filter(seat => occupiedSet.has(seat));
+
+        if (conflictingSeats.length > 0) {
+            await connection.rollback();
+            return res.status(409).json({
+                success: false,
+                message: `Seat(s) ${conflictingSeats.join(', ')} already booked or reserved! Please choose different seats.`,
+                conflictingSeats,
+                occupiedSeats: Array.from(occupiedSet)
+            });
+        }
+
+        // 3. If seats are available, insert booking with pending status
+        const seatsForDb = requestedSeats.join(',');
+        const insertSql = `
             INSERT INTO bookings (user_id, show_id, seats, total_price, booking_status)
             VALUES (?, ?, ?, ?, 'pending')
         `;
 
-        const [result]: any = await pool.execute(sql, [
+        const [result]: any = await connection.execute(insertSql, [
             user_id, 
             show_id, 
             seatsForDb, 
             total_price
         ]);
+
+        await connection.commit();
 
         return res.status(201).json({
             success: true,
@@ -85,12 +149,15 @@ const seatsForDb = Array.isArray(seats_booked)
         });
 
     } catch (error: any) {
+        if (connection) await connection.rollback();
         console.error("Booking Error:", error);
         return res.status(500).json({
             success: false,
             message: "Internal Server Error",
             error: error.message
         });
+    } finally {
+        if (connection) connection.release();
     }
 };
 
@@ -100,25 +167,33 @@ export const getBookedSeatsByShow = async (req: Request, res: Response) => {
 
     try {
         const [rows]: any = await pool.execute(
-            'SELECT seats FROM bookings WHERE show_id = ?',
+            `SELECT seats FROM bookings 
+             WHERE show_id = ? 
+               AND (
+                 booking_status = 'confirmed' 
+                 OR (booking_status = 'pending' AND (created_at >= NOW() - INTERVAL 10 MINUTE OR created_at IS NULL))
+               )`,
             [showId]
         );
 
         const occupiedSeats = rows
             .map((row: any) => {
-                // This regex removes [ ] ' " characters if they were accidentally saved
-                const cleanString = row.seats.replace(/[\[\]'"]/g, "");
+                const cleanString = String(row.seats || "").replace(/[\[\]'"]/g, "");
                 return cleanString.split(',');
             })
             .flat()
-            .map((s: string) => s.trim()); // Remove any accidental spaces
+            .map((s: string) => s.trim().toUpperCase())
+            .filter((s: string) => s.length > 0);
+
+        const uniqueOccupiedSeats = Array.from(new Set(occupiedSeats));
 
         return res.status(200).json({
             success: true,
-            bookedSeats: occupiedSeats // Now returns clean ["A1", "A2"]
+            bookedSeats: uniqueOccupiedSeats
         });
-    } catch (error) {
-        res.status(500).json({ success: false });
+    } catch (error: any) {
+        console.error("Error fetching booked seats:", error);
+        res.status(500).json({ success: false, message: error.message });
     }
 };
 
